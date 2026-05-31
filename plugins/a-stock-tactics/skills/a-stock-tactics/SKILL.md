@@ -2,13 +2,15 @@
 name: a-stock-tactics
 description: A股短线战法工具包 — 行情数据(通达信mootdx+腾讯)+战法计算层(均线MA5/10/24生命线/60季线、均量线金叉死叉、K线形态识别、MACD/威廉指标、大盘环境、周线确认、涨停板质量)+一键战法体检(stock_diagnosis)+信号资金题材(同花顺热点题材归因、概念板块、行业排名、个股资金流、龙虎榜、解禁、个股新闻、F10/公告)。基于"均线位置+量能状态+所处高低位"三要素的100条短线打板战法，自动按规则打分输出 买入候选/持有/卖出/回避。适用于涨停打板、强势股筛选、均线生命线判断、量能金叉死叉、题材联动、龙虎榜跟踪、个股短线体检等场景。
 origin: custom
-version: 1.5.2
+version: 1.5.3
 ---
 
-# A股短线战法工具包 V1.5.2
+# A股短线战法工具包 V1.5.3
 
 基于一套 100 条短线打板/强势股战法，把**原始行情数据**转成战法决策信号。核心三要素：**均线位置（MA5/MA24生命线/MA60季线）· 量能状态（均量线金叉死叉、持续放量）· 所处高低位**。覆盖主板/中小板/科创板/创业板/ST。
 
+> **V1.5.3（吸收基本面框架细化）：** `risk_check` 基本面块新增 **ROE / 资产负债率（>70%预警）/ 经营现金流-净利匹配度（<0.3提示利润含金量低）** + **A股估值参照系**提示（PE中位数30-50x为常态，对标同行业，勿套用美股15-25x）。吸收自 TradingAgents 基本面分析师框架。
+>
 > **V1.5.2（吸收技术指标解读经验）：** `compute_indicators` 升级——**RSI 不再机械判超买**（A股强势股 60-85 是常态，仅 >85 提示过热）+ 新增 **MA50/MA200 金叉死叉**（长期趋势）、**VWMA20**（量价加权均线）、**布林带**上下轨与"触上轨≠必然回落"解读。吸收自 TradingAgents 市场分析师指标经验。
 >
 > **V1.5.1（吸收解禁监控框架）：** 新增 `lockup_pressure()` 解禁压力评级（占流通比 >20%重大/5~20%中等/<5%轻微）+ 减持新规阈值提示；`risk_check` 接入解禁压力。顺带修正 `lockup_expiry` 用错的字段名（`LIMITED_STOCK_TYPE`/`FREE_SHARES_NUM` → 实际 `FREE_SHARES_TYPE`/`FREE_SHARES`）。
@@ -743,20 +745,42 @@ def risk_check(code: str, name: str = "", df=None) -> dict:
     warns = []
     info = {}
 
-    # 1) 亏损 — mootdx 财务快照
+    # 1) 财务质量 — mootdx 财务快照（吸收自 TradingAgents 基本面框架：ROE/资产负债率/现金流匹配）
     try:
         fin = _client().finance(symbol=code)
         if fin is not None and len(fin):
-            np_ = float(fin.iloc[0].get("jinglirun", 0) or 0)      # 净利润
-            rev = float(fin.iloc[0].get("zhuyingshouru", 0) or 0)  # 主营收入
+            r0 = fin.iloc[0]
+            np_ = float(r0.get("jinglirun", 0) or 0)        # 净利润
+            rev = float(r0.get("zhuyingshouru", 0) or 0)    # 主营收入
+            equity = float(r0.get("jingzichan", 0) or 0)    # 净资产
+            assets = float(r0.get("zongzichan", 0) or 0)    # 总资产
+            ld_debt = float(r0.get("liudongfuzhai", 0) or 0)  # 流动负债
+            lt_debt = float(r0.get("changqifuzhai", 0) or 0)  # 长期负债
+            opcf = float(r0.get("jingyingxianjinliu", 0) or 0)  # 经营性现金流
             info["net_profit_yi"] = round(np_/1e8, 2)
             info["revenue_yi"] = round(rev/1e8, 2)
             if np_ < 0:
                 warns.append(f"⚠️亏损：最新季报净利润 {np_/1e8:.2f}亿（爆炒亏损股风险）")
+            # ROE = 净利润/净资产
+            if equity > 0:
+                roe = np_ / equity * 100
+                info["ROE%"] = round(roe, 1)
+            # 资产负债率 =（流动+长期负债）/总资产
+            if assets > 0:
+                debt_ratio = (ld_debt + lt_debt) / assets * 100
+                info["资产负债率%"] = round(debt_ratio, 1)
+                if debt_ratio > 70:
+                    warns.append(f"⚠️高负债：资产负债率 {debt_ratio:.0f}%（>70%偿债压力大）")
+            # 经营现金流/净利润 匹配度（盈利质量；<0.5 或为负 = 纸面利润）
+            if np_ > 0:
+                cf_match = opcf / np_
+                info["现金流净利比"] = round(cf_match, 2)
+                if cf_match < 0.3:
+                    warns.append(f"⚠️盈利质量：经营现金流/净利润仅 {cf_match:.2f}（<0.3，利润含金量低）")
     except Exception:
         info["finance"] = "未取到"
 
-    # 2) 估值 — 腾讯 PE/PB
+    # 2) 估值 — 腾讯 PE/PB（A股估值参照系：PE中位数30-50x为常态，不套用美股15-25x，应同行业横向比）
     try:
         pre = "sh" if code.startswith(("6","9")) else ("bj" if code.startswith("8") else "sz")
         u = f"https://qt.gtimg.cn/q={pre}{code}"
@@ -764,10 +788,11 @@ def risk_check(code: str, name: str = "", df=None) -> dict:
         v = urllib.request.urlopen(rq, timeout=8).read().decode("gbk").split('"')[1].split("~")
         pe = float(v[39]) if v[39] else 0; pb = float(v[46]) if len(v) > 46 and v[46] else 0
         info["PE_TTM"] = pe; info["PB"] = pb
+        info["估值参照"] = "A股PE中位数30-50x为常态，应对标同行业横向比，勿套用美股15-25x"
         if pe < 0:
             warns.append(f"⚠️估值：PE为负（{pe}），公司当前亏损")
         elif pe > 200:
-            warns.append(f"⚠️估值：PE高达 {pe:.0f} 倍，估值极高")
+            warns.append(f"⚠️估值：PE高达 {pe:.0f} 倍，估值极高（即便A股也明显偏贵）")
     except Exception:
         info["valuation"] = "未取到"
 
