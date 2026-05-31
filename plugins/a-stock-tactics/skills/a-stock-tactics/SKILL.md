@@ -2,13 +2,18 @@
 name: a-stock-tactics
 description: A股短线战法工具包 — 行情数据(通达信mootdx+腾讯)+战法计算层(均线MA5/10/24生命线/60季线、均量线金叉死叉、K线形态识别、MACD/威廉指标、大盘环境、周线确认、涨停板质量)+一键战法体检(stock_diagnosis)+信号资金题材(同花顺热点题材归因、概念板块、行业排名、个股资金流、龙虎榜、解禁、个股新闻、F10/公告)。基于"均线位置+量能状态+所处高低位"三要素的100条短线打板战法，自动按规则打分输出 买入候选/持有/卖出/回避。适用于涨停打板、强势股筛选、均线生命线判断、量能金叉死叉、题材联动、龙虎榜跟踪、个股短线体检等场景。
 origin: custom
-version: 1.4.2
+version: 1.5.0
 ---
 
-# A股短线战法工具包 V1.4.2
+# A股短线战法工具包 V1.5.0
 
 基于一套 100 条短线打板/强势股战法，把**原始行情数据**转成战法决策信号。核心三要素：**均线位置（MA5/MA24生命线/MA60季线）· 量能状态（均量线金叉死叉、持续放量）· 所处高低位**。覆盖主板/中小板/科创板/创业板/ST。
 
+> **V1.5.0（吸收 TradingAgents 游资分析框架）：**
+> - **新增 `volume_anomaly()`**：量价异动（日量>20日均量2倍=放量异动）+ **连板放缩量语义**（首板放量=分歧/缩量=一致；三板以上=妖股模式）。`risk_check` 妖股识别接入连板语义，三板以上直接标妖股模式。
+> - **新增 `capital_battle()`**：综合主力净/散户净+量价，判定**资金博弈四态**（主力吸筹/主力出货/游资接力/散户主导诱多）。`stock_diagnosis` 资金面升级为四态判定。
+> - 吸收自兄弟项目 TradingAgents-astock 游资追踪分析师的量化判据。
+>
 > **V1.4.2（移除回测库，回归纯体检工具）：** 移除 `save_diagnosis`/`save_batch`/`backtest` 及本地 CSV 存档——保持轻量纯函数定位，体检结果即时输出不落盘。
 >
 > **V1.4.1（资金面 + 成交量）：**
@@ -580,6 +585,69 @@ def fund_flow_em(code: str, lmt: int = 5) -> list:
                          "小单万": round(float(p[2])/1e4, 0)})
     return rows
 
+# ── 缺5c：量价异动 + 连板语义（吸收自 TradingAgents 游资追踪框架）──
+def volume_anomaly(df: pd.DataFrame, code: str, name: str = "") -> dict:
+    """量价异动识别 + 连板放缩量语义。
+    判据（游资框架）：日量>20日均量2倍=放量异动；换手率>10%=异常活跃（需腾讯，缺则跳过）；
+    连板：首板放量=分歧/缩量=一致；三板以上=妖股模式。"""
+    last = df.iloc[-1]
+    lp = limit_pct(code, name)
+    vol20 = df['vol'].iloc[-20:].mean()
+    vol_x = round(last['vol'] / vol20, 2) if vol20 else 0
+    out = {"量比20日": vol_x, "放量异动": bool(vol_x >= 2.0)}
+    # 连续涨停板数（从最后一根往前数连续涨停）
+    boards = 0
+    for i in range(len(df)-1, 0, -1):
+        chg = (df.iloc[i]['close']/df.iloc[i-1]['close'] - 1) * 100
+        if chg >= lp - 0.3:
+            boards += 1
+        else:
+            break
+    out["连板数"] = boards
+    # 连板语义
+    if boards >= 1:
+        # 最近一个涨停日的量 vs 前一日量：放量=分歧，缩量=一致
+        lim_vol = df.iloc[-1]['vol']; prev_vol = df.iloc[-2]['vol'] if len(df) >= 2 else lim_vol
+        seal = "放量(分歧)" if lim_vol > prev_vol * 1.1 else ("缩量(一致)" if lim_vol < prev_vol * 0.9 else "平量")
+        if boards >= 3:
+            out["连板语义"] = f"{boards}连板·三板以上进入妖股模式需特别谨慎（规则09/76）"
+        elif boards == 1:
+            out["连板语义"] = f"首板·{seal}（缩量更安全，规则24/50）"
+        else:
+            out["连板语义"] = f"{boards}连板·{seal}"
+    else:
+        out["连板语义"] = ""
+    return out
+
+# ── 缺5d：资金博弈四态（吸收自 TradingAgents：主力吸筹/出货/游资接力/散户主导）──
+def capital_battle(code: str, df: pd.DataFrame = None, name: str = "") -> dict:
+    """综合主力净/散户净 + 量价，判定当前资金博弈格局四态之一。
+    依赖 fund_flow_em（间歇可达）；拿不到资金流则返回 {态:'[数据缺失:资金流]'}。"""
+    code = normalize(code)
+    if df is None:
+        df = get_daily(code, 70)
+    ff = fund_flow_em(code, lmt=3)
+    if not ff:
+        return {"态": "[数据缺失:资金流]", "说明": "push2 资金流接口未取到，无法判定主力/散户格局"}
+    f0 = ff[-1]
+    main = f0["主力净万"]; retail = f0["中单万"] + f0["小单万"]
+    last = df.iloc[-1]; chg = last['chg'] if 'chg' in df.columns else 0
+    up = chg > 0
+    # 四态判定
+    if main > 0 and not up:
+        state = "主力吸筹"; note = "主力净流入但股价未涨——疑似低位吸筹"
+    elif main < 0 and up:
+        state = "散户主导(诱多)"; note = "股价涨但主力净流出——散户接盘/拉高出货嫌疑"
+    elif main < 0 and not up:
+        state = "主力出货"; note = "主力净流出且股价下跌——出货特征"
+    elif main > 0 and up:
+        # 主力流入+上涨：看超大单是否主导，区分机构 vs 游资接力
+        state = "主力推动" if f0["超大单万"] > 0 else "游资接力"
+        note = "主力净流入推动上涨" if f0["超大单万"] > 0 else "大单为主、超大单不足——游资接力特征"
+    else:
+        state = "资金博弈"; note = "多空均衡"
+    return {"态": state, "说明": note, "主力净万": main, "散户净万": round(retail, 0), "超大单万": f0["超大单万"]}
+
 # ── 缺5：大盘环境（规则33先看大盘 / 62空头配合出货 / 97暴跌找逆势强势）──
 def market_regime() -> dict:
     res = {}
@@ -681,8 +749,15 @@ def risk_check(code: str, name: str = "", df=None) -> dict:
         rise20 = (df.iloc[-1]['close']/df.iloc[-21]['close'] - 1) * 100
         volmax = df['vol'].iloc[-10:].max(); volbase = df['vol'].iloc[-30:-10].mean()
         spike = (volmax/volbase) if volbase else 0
-        info.update({"近10日涨停": limitups, "近20日涨幅%": round(rise20, 0), "天量倍数": round(spike, 1)})
-        if limitups >= 3 or rise20 >= 50 or spike >= 4:
+        # 连板语义（游资框架）：连续涨停板数
+        va = volume_anomaly(df, code, name)
+        boards = va.get("连板数", 0)
+        info.update({"近10日涨停": limitups, "近20日涨幅%": round(rise20, 0),
+                     "天量倍数": round(spike, 1), "连板数": boards, "连板语义": va.get("连板语义", "")})
+        # 三板以上=妖股模式（游资框架，比单看涨停次数更准）
+        if boards >= 3:
+            warns.append(f"🔥妖股模式：{boards}连板·三板以上爆炒——崩塌风险极高，坚决回避（规则09/76）")
+        elif limitups >= 3 or rise20 >= 50 or spike >= 4:
             warns.append(f"🔥妖股顶部风险：近10日涨停{limitups}次/20日涨{rise20:.0f}%/天量{spike:.1f}倍——警惕爆炒后崩塌（规则09/44/76/88）")
     except Exception:
         pass
@@ -787,34 +862,31 @@ def stock_diagnosis(code: str, name: str = "", with_market: bool = True) -> dict
 
     # 避雷层：基本面/消息面/妖股顶部（不改技术信号，但可下调结论）
     risk = risk_check(code, name, df=df)
-    is_yaogu = any("妖股顶部" in w for w in risk["风险提示"])
+    is_yaogu = any(("妖股顶部" in w) or ("妖股模式" in w) for w in risk["风险提示"])
     is_loss = any("亏损" in w for w in risk["风险提示"])
-    # 妖股顶部风险 → 买入候选一律降级为"高风险观望"（规则09/28/76/92）
+    # 妖股顶部/妖股模式风险 → 买入候选一律降级为"高风险观望"（规则09/28/76/92）
     if is_yaogu and verdict in ("强势买入候选", "买入候选"):
         verdict = "高风险观望（妖股顶部）"
 
     # 人工规则提示：约30条靠经验的规则无法自动判定，按形态特征提醒用户结合思考
     reminders = manual_reminders(df, ma, vol, pat, drawdown, verdict)
 
-    # 资金面：当日主力/散户净流入（push2，区分主力 vs 中小单=散户）
-    ff = fund_flow_em(code, lmt=1)
-    flow = {}
-    if ff:
-        f0 = ff[-1]
-        retail = f0["中单万"] + f0["小单万"]   # 中单+小单 ≈ 散户
-        flow = {"主力净万": f0["主力净万"], "超大单万": f0["超大单万"],
-                "散户净万": round(retail, 0),
-                "方向": "主力流入" if f0["主力净万"] > 0 else "主力流出"}
+    # 量价异动 + 连板语义（游资框架）
+    va = volume_anomaly(df, code, name)
+    # 资金面：主力/散户博弈四态（capital_battle，区分吸筹/出货/接力/散户主导）
+    battle = capital_battle(code, df=df, name=name)
 
     return {
         "code": code, "name": name, "结论": verdict,
         "大盘": market_regime()["overall"] if with_market else None,
         "位置": {"距40日高点": f"{drawdown}%", "周线方向": wk.get("weekly_MA5_slope")},
         "均线": ma, "量能": vol, "K线形态": pat['patterns'],
+        "量价异动": {"量比20日": va["量比20日"], "放量异动": va["放量异动"],
+                   "连板数": va["连板数"], "连板语义": va["连板语义"]},
         "指标": {"MACD多头": ind.get("MACD_above_signal"), "威廉强势": ind.get("WR_strong"), "WR6": ind.get("WR6")},
         "买入信号": buy, "卖出回避信号": sell,
         "风险提示": risk["风险提示"], "基本面": risk["基本面"],
-        "资金面": flow,
+        "资金面": battle,
         "需人工判断": reminders,
     }
 
