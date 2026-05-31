@@ -2,13 +2,17 @@
 name: a-stock-tactics
 description: A股短线战法工具包 — 行情数据(通达信mootdx+腾讯)+战法计算层(均线MA5/10/24生命线/60季线、均量线金叉死叉、K线形态识别、MACD/威廉指标、大盘环境、周线确认、涨停板质量)+一键战法体检(stock_diagnosis)+信号资金题材(同花顺热点题材归因、概念板块、行业排名、个股资金流、龙虎榜、解禁、个股新闻、F10/公告)。基于"均线位置+量能状态+所处高低位"三要素的100条短线打板战法，自动按规则打分输出 买入候选/持有/卖出/回避。适用于涨停打板、强势股筛选、均线生命线判断、量能金叉死叉、题材联动、龙虎榜跟踪、个股短线体检等场景。
 origin: custom
-version: 1.1.0
+version: 1.2.0
 ---
 
-# A股短线战法工具包 V1.1.0
+# A股短线战法工具包 V1.2.0
 
 基于一套 100 条短线打板/强势股战法，把**原始行情数据**转成战法决策信号。核心三要素：**均线位置（MA5/MA24生命线/MA60季线）· 量能状态（均量线金叉死叉、持续放量）· 所处高低位**。覆盖主板/中小板/科创板/创业板/ST。
 
+> **V1.2.0（新增人工规则提示）：**
+> - **新增 `manual_reminders()`**：100 条里约 30 条是靠经验的"人工纪律"（波段计数、追高、暴跌后第一反弹、洗盘判断等），无法自动打分。本函数按形态特征**主动提醒**该结合哪条人工规则思考（如：近期跌停+今日反弹→提示规则93；涨停偏离5日线过远→提示规则27/28不追高）。
+> - `stock_diagnosis` 输出新增 `需人工判断` 字段。让使用者不漏掉那些工具算不了、但战法很看重的经验铁律。
+>
 > **V1.1.0（新增基本面避雷层）：**
 > - **新增 `risk_check()`**：纯技术战法的避雷补充——亏损（mootdx净利润）+ 估值异常（PE负/>200）+ ST + **妖股顶部识别**（近10日涨停≥3次/20日涨≥50%/天量≥4倍，规则09/44/76/88）+ 个股新闻（尽力而为）。
 > - `stock_diagnosis` 集成避雷：**妖股顶部风险会把"买入候选"自动降级为"高风险观望"**，并输出 `风险提示` + `基本面` 字段。解决了纯技术把"爆炒亏损股"误判为强势的盲点。
@@ -651,7 +655,42 @@ def risk_check(code: str, name: str = "", df=None) -> dict:
 
     return {"风险提示": warns, "基本面": info}
 
-# ── 缺10：一键战法体检（整合①–⑨，技术打分 + 基本面避雷）──
+# ── 缺10：人工规则提示（约30条靠经验的规则无法自动判定，按形态特征触发提醒）──
+def manual_reminders(df, ma: dict, vol: dict, pat: dict, drawdown_pct: float, verdict: str) -> list:
+    """根据形态特征，提示该结合哪些"人工经验类"战法规则思考。
+    只提醒、不替用户下结论。drawdown_pct 为距40日高点回撤(负数)。"""
+    tips = []
+    # 规则93：暴跌后第一次反弹不轻易做 —— 近期出现过跌停 + 今日反弹
+    try:
+        lp = pat.get("limit_pct", 10)
+        recent_chg = [(df.iloc[i]['close']/df.iloc[i-1]['close']-1)*100 for i in range(len(df)-8, len(df))]
+        had_limitdown = any(c <= -(lp-0.3) for c in recent_chg[:-1])  # 之前几天有跌停
+        today_up = recent_chg[-1] > 3
+        if had_limitdown and today_up:
+            tips.append("规则93：该股近期出现过跌停，今日为暴跌后的反弹——战法主张【不轻易做第一次反弹】，需人工确认暴跌原因")
+    except Exception:
+        pass
+    # 规则27/28：涨停且偏离5日线过远 → 不追高
+    if "涨停" in pat['patterns'] and ma.get('deviate_MA5_pct', 0) > 5:
+        tips.append(f"规则27/28：今日涨停且偏离5日线 {ma['deviate_MA5_pct']}%，【不宜追高】；若追，次日高开3%即走")
+    # 规则09/44：距高点不远且仍在涨 → 留意第几波，三波后出局
+    if drawdown_pct > -5 and ma.get('MA5_slope') == "up":
+        tips.append("规则09/44：股价接近阶段高位且仍在上行，需人工判断这是第几波上涨——【三波明显上涨后坚决出局】")
+    # 规则41：高位十字星 → 顶部预警
+    if "十字星" in pat['patterns'] and drawdown_pct > -8:
+        tips.append("规则41：高位出现十字星，留意是否【顶部来临】（连续十字星更需警惕）")
+    # 规则82/83：洗盘震仓判断（站上生命线但震荡大）
+    if ma.get('above_MA24') and abs(ma.get('deviate_MA5_pct', 0)) > 4:
+        tips.append("规则82/83：股价偏离均线较大、波动剧烈，需人工分辨是【洗盘震仓】还是【主升/出货】")
+    # 买入候选类 → 提醒先看大盘、买后多看少动
+    if verdict in ("强势买入候选", "买入候选"):
+        tips.append("规则33：买入前先确认【大盘环境】；规则36：趋势确立后【多看少动】，规则34：短线持有2周内/超短3天内")
+    # 规则92：弱势区反弹不抄底
+    if not ma.get('above_MA24') and ma.get('MA5_slope') != "down":
+        tips.append("规则92：生命线下方的反弹属弱势反抽，【不等反弹、不随便抄底】")
+    return tips
+
+# ── 缺11：一键战法体检（整合①–⑩，技术打分 + 基本面避雷 + 人工规则提示）──
 def stock_diagnosis(code: str, name: str = "", with_market: bool = True) -> dict:
     code = normalize(code)
     df = get_daily(code, 70)
@@ -706,6 +745,9 @@ def stock_diagnosis(code: str, name: str = "", with_market: bool = True) -> dict
     if is_yaogu and verdict in ("强势买入候选", "买入候选"):
         verdict = "高风险观望（妖股顶部）"
 
+    # 人工规则提示：约30条靠经验的规则无法自动判定，按形态特征提醒用户结合思考
+    reminders = manual_reminders(df, ma, vol, pat, drawdown, verdict)
+
     return {
         "code": code, "name": name, "结论": verdict,
         "大盘": market_regime()["overall"] if with_market else None,
@@ -714,6 +756,7 @@ def stock_diagnosis(code: str, name: str = "", with_market: bool = True) -> dict
         "指标": {"MACD多头": ind.get("MACD_above_signal"), "威廉强势": ind.get("WR_strong"), "WR6": ind.get("WR6")},
         "买入信号": buy, "卖出回避信号": sell,
         "风险提示": risk["风险提示"], "基本面": risk["基本面"],
+        "需人工判断": reminders,
     }
 ```
 
