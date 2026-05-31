@@ -2,11 +2,15 @@
 
 > A 股短线战法工具包 —— 给 AI 编程助手用的「短线打板/强势股」分析 Skill
 
-把一套 100 条的短线战法，变成 AI 一句话就能执行的能力：拉 A 股行情，自动算 **均线/量能/K线形态/技术指标 + 基本面避雷 + 资金博弈四态 + 连板语义 + 解禁压力**，按战法规则打分并提示人工纪律，输出 **买入候选 / 持有 / 卖出 / 回避** 及命中的规则号；还能筛"可低吸位置"（不追涨停）。
+一句话，让 AI 像一支**分析师团队**那样给 A 股个股做体检——内置 8 个分析视角协作出一份结论：
+
+> 🔧 **技术分析师**（均线/量能/K线形态/MACD-威廉-RSI/周线）· 🌏 **大盘分析师**（指数多空环境）· 🎯 **游资分析师**（量价异动/连板语义）· 💰 **资金分析师**（主力vs散户博弈四态）· 📊 **基本面分析师**（盈利/估值/ROE/负债/现金流质量）· 🔓 **解禁分析师**（解禁压力评级）· 📋 **纪律提示官**（30条经验铁律）· ⚖️ **多空辩手**（🐂多头席 vs 🐻空头席对辩）
+
+它们的"裁判"是一套 **100 条短线打板战法**（生命线 MA24 为多空总纲）——综合 8 个视角后，输出 **五档评级（Buy/增持/持有/减持/卖出）+ 多空对辩报告 + 命中的规则号**，并能筛"可低吸位置"（不追涨停）。
 
 核心是一个自包含的 `SKILL.md`（结构化 Markdown + 内嵌可运行 Python），兼容 [Claude Code](https://github.com/anthropics/claude-code)、Codex 等支持上下文注入的 AI 编程助手。
 
-> **当前版本 v1.5.3** ·「技术打分 + 基本面避雷 + 人工规则提示」三层体检 +「低吸选股」（不追涨停）+「资金博弈四态 + 连板语义 + 解禁压力 + 指标修正 + ROE/负债/现金流质量」（吸收自 TradingAgents）。
+> **当前版本 v1.6.0** ·「技术打分 + 基本面避雷 + 人工规则提示」体检 +「低吸选股」+「资金博弈四态/连板语义/解禁压力/ROE质量」+「**五档评级 + 多空对辩 + T+1陷阱**」（吸收自 TradingAgents 全套分析框架）。
 
 ---
 
@@ -17,7 +21,7 @@
 **① 技术打分（战法计算层）**
 - 均线（MA5/MA24生命线/MA60季线 + MA50/MA200金叉死叉 + VWMA量价加权）、均量线金叉死叉、K线形态（涨停/光头大阳/红三兵/跳空/十字星）、MACD/威廉/RSI/布林带、大盘多空环境、周线确认
 - **RSI 按 A 股修正**：强势股 RSI 60-85 是常态而非超买（仅 >85 提示过热），避免误杀强势股
-- 按 100 条战法可量化规则打分 → 输出 **买入候选 / 持有 / 卖出 / 回避**
+- 按 100 条战法可量化规则打分 → **五档评级（Buy/增持/持有/减持/卖出）**，并给出 **🐂多头席 / 🐻空头席 / ⚖️战法裁决** 多空对辩（T+1陷阱：今日涨停追高自动降级）
 
 **② 基本面避雷（risk_check）**
 - 自动查**亏损**（净利润为负）、**估值异常**（PE 负 / >200）、**ST 风险**
@@ -127,7 +131,7 @@ Layer 6 基础数据   mootdx F10 + 东财个股信息（流通盘/题材/上市
 Layer 7 公告层     巨潮 cninfo 公告全文
 ```
 
-详见 [`SKILL.md`](./plugins/a-stock-tactics/skills/a-stock-tactics/SKILL.md) 与战法原文 [`reference/战法100条.md`](./plugins/a-stock-tactics/skills/a-stock-tactics/reference/战法100条.md)。
+详见 [`SKILL.md`](./plugins/a-stock-tactics/skills/a-stock-tactics/SKILL.md)、战法原文 [`reference/战法100条.md`](./plugins/a-stock-tactics/skills/a-stock-tactics/reference/战法100条.md) 与分析框架手册 [`reference/分析框架.md`](./plugins/a-stock-tactics/skills/a-stock-tactics/reference/分析框架.md)。
 
 ---
 
@@ -148,6 +152,16 @@ Layer 7 公告层     巨潮 cninfo 公告全文
 ## ⚠️ 免责声明
 
 本工具以**技术形态**为主（均线/量能/K线形态评分），辅以**基本面避雷**（亏损/估值/妖股顶部）和**人工规则提示**。它不含盘口实时博弈、不替代深度基本面分析，**不构成任何投资建议**。据此操作风险自负，股市有风险，入市需谨慎。
+
+---
+
+## 🙏 致谢
+
+本项目的多维分析框架（游资/连板语义、解禁压力评级、基本面质量、技术指标解读、多空对辩、五档评级等量化判据）借鉴自 [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents)（Apache 2.0）及其 A 股特化版 [TradingAgents-astock](https://github.com/simonlin1212/TradingAgents-astock)。感谢原作者的出色工作和开源精神。
+
+原始论文：*TradingAgents: Multi-Agents LLM Financial Trading Framework*。
+
+本项目仅吸收其**可量化的分析判据**编码为离线纯函数规则，不含其多 Agent / LLM 架构，保持轻量 skill 定位。
 
 ---
 

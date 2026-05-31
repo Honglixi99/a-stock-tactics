@@ -1,14 +1,19 @@
 ---
 name: a-stock-tactics
-description: A股短线战法工具包 — 行情数据(通达信mootdx+腾讯)+战法计算层(均线MA5/10/24生命线/60季线、均量线金叉死叉、K线形态识别、MACD/威廉指标、大盘环境、周线确认、涨停板质量)+一键战法体检(stock_diagnosis)+信号资金题材(同花顺热点题材归因、概念板块、行业排名、个股资金流、龙虎榜、解禁、个股新闻、F10/公告)。基于"均线位置+量能状态+所处高低位"三要素的100条短线打板战法，自动按规则打分输出 买入候选/持有/卖出/回避。适用于涨停打板、强势股筛选、均线生命线判断、量能金叉死叉、题材联动、龙虎榜跟踪、个股短线体检等场景。
+description: A股短线战法工具包 — 行情数据(通达信mootdx+腾讯)+战法计算层(均线MA5/10/24生命线/60季线、均量线金叉死叉、K线形态识别、MACD/威廉指标、大盘环境、周线确认、涨停板质量)+一键战法体检(stock_diagnosis)+信号资金题材(同花顺热点题材归因、概念板块、行业排名、个股资金流、龙虎榜、解禁、个股新闻、F10/公告)。基于"均线位置+量能状态+所处高低位"三要素的100条短线打板战法，自动按规则打分输出五档评级(Buy/增持/持有/减持/卖出)+多空对辩。适用于涨停打板、强势股筛选、均线生命线判断、量能金叉死叉、题材联动、龙虎榜跟踪、个股短线体检等场景。
 origin: custom
-version: 1.5.3
+version: 1.6.0
 ---
 
-# A股短线战法工具包 V1.5.3
+# A股短线战法工具包 V1.6.0
 
 基于一套 100 条短线打板/强势股战法，把**原始行情数据**转成战法决策信号。核心三要素：**均线位置（MA5/MA24生命线/MA60季线）· 量能状态（均量线金叉死叉、持续放量）· 所处高低位**。覆盖主板/中小板/科创板/创业板/ST。
 
+> **V1.6.0（五档评级 + 多空对辩，吸收 TradingAgents 研究员框架）：**
+> - **结论改五档**：Buy / 增持 / 持有 / 减持 / 卖出（替代原"强势买入候选/买入候选/持有/观望/回避/回避卖出"）。亏损股封顶不给 Buy/增持；妖股顶部降级。
+> - **新增 `bull_bear_debate()`**：把已算信号归类为 **🐂多头席 / 🐻空头席 / ⚖️战法裁决** 三方观点，由 Claude 据此做对辩式综合——形似多 Agent 辩论，实为一个分析师的全面双向思考。多头框架（游资接力/量价配合/站稳生命线）、空头框架（解禁/游资撤退/估值泡沫/破位）均吸收自 TradingAgents 研究员。
+> - **新增 T+1 陷阱提示**：今日涨停追高、明日才能卖、隔夜反转风险（规则27/28）——让"强势涨停"自动降级为更谨慎评级。
+>
 > **V1.5.3（吸收基本面框架细化）：** `risk_check` 基本面块新增 **ROE / 资产负债率（>70%预警）/ 经营现金流-净利匹配度（<0.3提示利润含金量低）** + **A股估值参照系**提示（PE中位数30-50x为常态，对标同行业，勿套用美股15-25x）。吸收自 TradingAgents 基本面分析师框架。
 >
 > **V1.5.2（吸收技术指标解读经验）：** `compute_indicators` 升级——**RSI 不再机械判超买**（A股强势股 60-85 是常态，仅 >85 提示过热）+ 新增 **MA50/MA200 金叉死叉**（长期趋势）、**VWMA20**（量价加权均线）、**布林带**上下轨与"触上轨≠必然回落"解读。吸收自 TradingAgents 市场分析师指标经验。
@@ -59,7 +64,7 @@ Layer 2 战法计算层（核心·本工具包的"大脑"）
 ├── market_regime      → 上证/深成/创业板 多空环境
 ├── weekly_view        → 周线方向 + 三线合一
 ├── limit_up_quality   → 封单/换手（涨停板质量）
-└── stock_diagnosis    → ★一键体检：按战法打分 → 买入候选/持有/卖出/回避
+└── stock_diagnosis    → ★一键体检：按战法打分 → 五档评级(Buy/增持/持有/减持/卖出) + 多空对辩
 
 Layer 3 信号/题材层
 ├── 同花顺热点     → 当日强势股 + 题材归因 reason tags (零鉴权 73ms)
@@ -413,7 +418,7 @@ print("最近5根K线:", data["rows"][-5:])
 
 ## Layer 2: 战法计算层（核心 — 短线战法的"大脑"）
 
-> 行情层只提供**原始 K 线**，本层把它转成战法真正要看的东西：均线位置、量能金叉死叉、K线形态、技术指标、大盘环境、周线确认，并最终由 `stock_diagnosis()` 按 100 条战法逐条打分，输出 **买入候选 / 持有 / 卖出 / 回避**。
+> 行情层只提供**原始 K 线**，本层把它转成战法真正要看的东西：均线位置、量能金叉死叉、K线形态、技术指标、大盘环境、周线确认，并最终由 `stock_diagnosis()` 按 100 条战法逐条打分，输出**五档评级（Buy/增持/持有/减持/卖出）+ 多空对辩**。
 >
 > 依赖：`pandas`（rolling 算均线均量）+ `stockstats`（MACD/威廉/RSI）。数据全部来自 mootdx（TCP，不封 IP）。
 
@@ -919,34 +924,48 @@ def stock_diagnosis(code: str, name: str = "", with_market: bool = True) -> dict
     if ma['deviate_MA5_pct'] < -5: sell.append("31:大幅偏离5日线下方")
     if not above5 and vol['VMA5_x_VMA10'] and vol['VMA5_x_VMA10'][0]=="dead_cross":
         sell.append("07/62:均量线死叉(弱势)")
-    # 结论（规则18：站上生命线是多空总分界）
+    # T+1 陷阱（吸收自 TradingAgents 空头框架）：今日涨停追高，明日才能卖，隔夜跳空风险
     has_limit = "涨停" in pat['patterns']
-    if not above24:
-        verdict = "回避/卖出" if len(sell) >= 2 else "回避"
-    elif has_limit and not sell:
-        verdict = "强势买入候选"
-    elif len(buy) >= 3 and not sell:
-        verdict = "买入候选"
-    elif above5 and ma['MA5_above_MA24'] and not sell:
-        verdict = "持有/观察"
-    else:
-        verdict = "观望"
+    if has_limit and ma['deviate_MA5_pct'] > 5:
+        sell.append("T+1陷阱:今日涨停追高，明日才能卖，隔夜反转/低开则被套（规则27/28）")
 
-    # 避雷层：基本面/消息面/妖股顶部（不改技术信号，但可下调结论）
+    # 避雷层：基本面/消息面/妖股顶部
     risk = risk_check(code, name, df=df)
     is_yaogu = any(("妖股顶部" in w) or ("妖股模式" in w) for w in risk["风险提示"])
     is_loss = any("亏损" in w for w in risk["风险提示"])
-    # 妖股顶部/妖股模式风险 → 买入候选一律降级为"高风险观望"（规则09/28/76/92）
-    if is_yaogu and verdict in ("强势买入候选", "买入候选"):
-        verdict = "高风险观望（妖股顶部）"
+    has_risk = len(risk["风险提示"]) > 0
 
-    # 人工规则提示：约30条靠经验的规则无法自动判定，按形态特征提醒用户结合思考
+    # ── 五档评级（吸收自 TradingAgents：Buy/增持/持有/减持/卖出）──
+    # 规则18 生命线是多空总分界；叠加买卖信号数 + 避雷
+    n_buy, n_sell = len(buy), len(sell)
+    if not above24:
+        # 生命线下方=弱势区
+        verdict = "卖出" if n_sell >= 2 else "减持"
+    elif is_yaogu:
+        verdict = "减持"   # 妖股顶部：即便强势也降级（规则09/28/76/92）
+    elif n_sell >= 1:
+        verdict = "持有"   # 站上生命线但有卖出信号→观望持有
+    elif has_limit and n_buy >= 4 and not has_risk:
+        verdict = "Buy"    # 涨停启动+多信号+无风险
+    elif n_buy >= 3:
+        verdict = "增持"
+    elif above5 and ma['MA5_above_MA24']:
+        verdict = "持有"
+    else:
+        verdict = "持有"
+    # 亏损股封顶（不给 Buy/增持）
+    if is_loss and verdict in ("Buy", "增持"):
+        verdict = "持有"
+
+    # 人工规则提示
     reminders = manual_reminders(df, ma, vol, pat, drawdown, verdict)
-
     # 量价异动 + 连板语义（游资框架）
     va = volume_anomaly(df, code, name)
-    # 资金面：主力/散户博弈四态（capital_battle，区分吸筹/出货/接力/散户主导）
+    # 资金面：主力/散户博弈四态
     battle = capital_battle(code, df=df, name=name)
+
+    # ── 多空对辩（吸收自 TradingAgents 多头/空头研究员框架）：Claude 分饰多席 ──
+    debate = bull_bear_debate(verdict, buy, sell, risk, battle, va, ma, ind, drawdown, has_limit)
 
     return {
         "code": code, "name": name, "结论": verdict,
@@ -961,8 +980,31 @@ def stock_diagnosis(code: str, name: str = "", with_market: bool = True) -> dict
         "买入信号": buy, "卖出回避信号": sell,
         "风险提示": risk["风险提示"], "基本面": risk["基本面"],
         "资金面": battle,
+        "多空对辩": debate,
         "需人工判断": reminders,
     }
+
+# ── 缺11b：多空对辩（吸收自 TradingAgents 多头/空头研究员框架）──
+# 不接 LLM、不做多次调用：纯规则把已算出的信号归类成「多头席/空头席/战法席」三方观点，
+# 由调用方(Claude)据此做对辩式综合。形似多 agent 辩论，实为一个分析师的全面双向思考。
+def bull_bear_debate(verdict, buy, sell, risk, battle, va, ma, ind, drawdown, has_limit) -> dict:
+    bull, bear = [], []
+    # 🐂 多头席（TradingAgents 多头框架：游资接力/量价配合/站稳生命线/估值/解禁已过）
+    if ma.get("above_MA24"): bull.append("站稳生命线MA24——多空分界之上，有做多土壤（规则18）")
+    for b in buy: bull.append(f"买入信号：{b}")
+    if battle.get("态") in ("主力吸筹", "主力推动", "游资接力"): bull.append(f"资金面：{battle.get('态')}——{battle.get('说明','')}")
+    if va.get("连板语义") and "妖股" not in va.get("连板语义", ""): bull.append(f"连板：{va['连板语义']}")
+    if ind.get("MACD_above_signal"): bull.append("MACD多头排列")
+    # 🐻 空头席（TradingAgents 空头框架：解禁/游资撤退/估值泡沫/T+1/破位）
+    for s in sell: bear.append(f"卖出信号：{s}")
+    for w in risk.get("风险提示", []): bear.append(w)
+    if battle.get("态") in ("主力出货", "散户主导(诱多)"): bear.append(f"资金面：{battle.get('态')}——{battle.get('说明','')}")
+    if "妖股" in va.get("连板语义", ""): bear.append(f"连板：{va['连板语义']}")
+    if drawdown > -3 and has_limit: bear.append("位置：已在阶段高位且今日涨停，追高+T+1隔夜风险（规则28）")
+    # ⚖️ 战法席（你的100战法总裁决）
+    tactics = f"战法总纲：{'站上' if ma.get('above_MA24') else '跌破'}生命线（规则18多空分界）；" + \
+              f"多头{len(bull)}条 vs 空头{len(bear)}条 → 五档评级【{verdict}】"
+    return {"🐂多头席": bull or ["无明显做多理由"], "🐻空头席": bear or ["无明显风险"], "⚖️战法裁决": tactics}
 
 # ── 缺12：低吸选股 —— 战法真正的买点（涨停回踩 / 横盘突破），不追已涨停 ──
 def find_pullback_buy(code: str, name: str = "") -> dict:
@@ -1802,6 +1844,8 @@ text = client.F10(symbol='688017', name='最新提示')
 > 本工具包内置的 100 条短线战法，核心是三要素：**① 均线位置（MA5/MA24生命线/MA60季线）· ② 量能状态（均量线金叉死叉、持续放量）· ③ 所处高低位**。`stock_diagnosis()` 已把可量化规则编码为自动打分。
 >
 > 📖 **战法 100 条原文 + 每条对应的函数映射**见 `reference/战法100条.md`。判定逻辑有疑问时回查该文件。
+>
+> 📐 **8 个分析视角的判据说明书**（技术/大盘/游资连板/资金博弈/基本面/解禁/人工纪律/多空对辩 → 五档评级）见 `reference/分析框架.md`。
 
 ### 看盘九步（规则33/95：先大盘后个股，先大级别后小级别）
 
