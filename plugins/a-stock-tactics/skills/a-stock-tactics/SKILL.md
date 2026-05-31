@@ -2,13 +2,17 @@
 name: a-stock-tactics
 description: A股短线战法工具包 — 行情数据(通达信mootdx+腾讯)+战法计算层(均线MA5/10/24生命线/60季线、均量线金叉死叉、K线形态识别、MACD/威廉指标、大盘环境、周线确认、涨停板质量)+一键战法体检(stock_diagnosis)+信号资金题材(同花顺热点题材归因、概念板块、行业排名、个股资金流、龙虎榜、解禁、个股新闻、F10/公告)。基于"均线位置+量能状态+所处高低位"三要素的100条短线打板战法，自动按规则打分输出 买入候选/持有/卖出/回避。适用于涨停打板、强势股筛选、均线生命线判断、量能金叉死叉、题材联动、龙虎榜跟踪、个股短线体检等场景。
 origin: custom
-version: 1.0.0
+version: 1.1.0
 ---
 
-# A股短线战法工具包 V1.0.0
+# A股短线战法工具包 V1.1.0
 
 基于一套 100 条短线打板/强势股战法，把**原始行情数据**转成战法决策信号。核心三要素：**均线位置（MA5/MA24生命线/MA60季线）· 量能状态（均量线金叉死叉、持续放量）· 所处高低位**。覆盖主板/中小板/科创板/创业板/ST。
 
+> **V1.1.0（新增基本面避雷层）：**
+> - **新增 `risk_check()`**：纯技术战法的避雷补充——亏损（mootdx净利润）+ 估值异常（PE负/>200）+ ST + **妖股顶部识别**（近10日涨停≥3次/20日涨≥50%/天量≥4倍，规则09/44/76/88）+ 个股新闻（尽力而为）。
+> - `stock_diagnosis` 集成避雷：**妖股顶部风险会把"买入候选"自动降级为"高风险观望"**，并输出 `风险提示` + `基本面` 字段。解决了纯技术把"爆炒亏损股"误判为强势的盲点。
+>
 > **V1.0.0（短线战法工具包）：**
 > - **新增「战法计算层」**：`compute_ma`（均线/死叉）· `compute_vol_ma`（均量线金叉死叉/持续放量）· `detect_patterns`（涨停/光头大阳/红三兵/跳空/十字星）· `compute_indicators`（MACD/威廉/RSI）· `market_regime`（大盘多空）· `weekly_view`（周线确认）· `limit_up_quality`（涨停板质量）。
 > - **新增一键体检 `stock_diagnosis(code)`**：整合上述计算，按 100 条战法可量化规则自动打分，输出 **买入候选 / 持有 / 卖出 / 回避** 及命中的规则号。
@@ -569,7 +573,85 @@ def limit_up_quality(code: str, name: str = "") -> dict:
     except Exception as e:
         return {"error": f"{type(e).__name__}"}
 
-# ── 缺8：一键战法体检（整合①–⑦，按规则打分 → 买入候选/持有/卖出/回避）──
+# ── 缺9：基本面/消息面避雷（纯技术战法的补充：盈利+估值+妖股顶部+新闻）──
+def risk_check(code: str, name: str = "", df=None) -> dict:
+    """避雷层：只提示风险，不改技术结论。
+    - 亏损：mootdx 财务快照净利润(jinglirun)为负
+    - 估值异常：腾讯 PE(负或>200)
+    - ST：名称含 ST
+    - 妖股顶部：近10日涨停≥3次 或 近20日涨幅≥50% 或 天量倍数≥4（规则09/44/76/88）
+    - 新闻：东财个股新闻（本机网络不稳，失败标注未取到，不影响结论）
+    """
+    import urllib.request, json as _json, re as _re
+    code = normalize(code)
+    warns = []
+    info = {}
+
+    # 1) 亏损 — mootdx 财务快照
+    try:
+        fin = _client().finance(symbol=code)
+        if fin is not None and len(fin):
+            np_ = float(fin.iloc[0].get("jinglirun", 0) or 0)      # 净利润
+            rev = float(fin.iloc[0].get("zhuyingshouru", 0) or 0)  # 主营收入
+            info["net_profit_yi"] = round(np_/1e8, 2)
+            info["revenue_yi"] = round(rev/1e8, 2)
+            if np_ < 0:
+                warns.append(f"⚠️亏损：最新季报净利润 {np_/1e8:.2f}亿（爆炒亏损股风险）")
+    except Exception:
+        info["finance"] = "未取到"
+
+    # 2) 估值 — 腾讯 PE/PB
+    try:
+        pre = "sh" if code.startswith(("6","9")) else ("bj" if code.startswith("8") else "sz")
+        u = f"https://qt.gtimg.cn/q={pre}{code}"
+        rq = urllib.request.Request(u); rq.add_header("User-Agent", "Mozilla/5.0")
+        v = urllib.request.urlopen(rq, timeout=8).read().decode("gbk").split('"')[1].split("~")
+        pe = float(v[39]) if v[39] else 0; pb = float(v[46]) if len(v) > 46 and v[46] else 0
+        info["PE_TTM"] = pe; info["PB"] = pb
+        if pe < 0:
+            warns.append(f"⚠️估值：PE为负（{pe}），公司当前亏损")
+        elif pe > 200:
+            warns.append(f"⚠️估值：PE高达 {pe:.0f} 倍，估值极高")
+    except Exception:
+        info["valuation"] = "未取到"
+
+    # 3) ST
+    if "ST" in (name or ""):
+        warns.append("⚠️ST股：有退市/风险警示，波动剧烈")
+
+    # 4) 妖股顶部（规则09/44/76/88）
+    try:
+        if df is None:
+            df = get_daily(code, 70)
+        lp = limit_pct(code, name)
+        chg10 = [(df.iloc[i]['close']/df.iloc[i-1]['close']-1)*100 for i in range(len(df)-10, len(df))]
+        limitups = sum(1 for c in chg10 if c >= lp - 0.3)
+        rise20 = (df.iloc[-1]['close']/df.iloc[-21]['close'] - 1) * 100
+        volmax = df['vol'].iloc[-10:].max(); volbase = df['vol'].iloc[-30:-10].mean()
+        spike = (volmax/volbase) if volbase else 0
+        info.update({"近10日涨停": limitups, "近20日涨幅%": round(rise20, 0), "天量倍数": round(spike, 1)})
+        if limitups >= 3 or rise20 >= 50 or spike >= 4:
+            warns.append(f"🔥妖股顶部风险：近10日涨停{limitups}次/20日涨{rise20:.0f}%/天量{spike:.1f}倍——警惕爆炒后崩塌（规则09/44/76/88）")
+    except Exception:
+        pass
+
+    # 5) 新闻（尽力而为，本机网络不稳）
+    try:
+        inner = _json.dumps({"uid":"","keyword":code,"type":["cmsArticleWebOld"],"client":"web",
+            "clientType":"web","clientVersion":"curr","param":{"cmsArticleWebOld":{"searchScope":"default",
+            "sort":"default","pageIndex":1,"pageSize":3,"preTag":"","postTag":""}}}, separators=(',',':'))
+        r = em_get("https://search-api-web.eastmoney.com/search/jsonp",
+                   params={"cb":"jq","param":inner},
+                   headers={"User-Agent": UA, "Referer":"https://so.eastmoney.com/"}, timeout=8)
+        txt = r.text; dj = _json.loads(txt[txt.index("(")+1:txt.rindex(")")])
+        arts = dj.get("result", {}).get("cmsArticleWebOld", []) or []
+        info["最近新闻"] = [f"{a.get('date','')[:10]} {_re.sub(r'<[^>]+>','',a.get('title',''))}" for a in arts[:3]]
+    except Exception:
+        info["最近新闻"] = "未取到（本机网络对东财不稳，建议手动查看）"
+
+    return {"风险提示": warns, "基本面": info}
+
+# ── 缺10：一键战法体检（整合①–⑨，技术打分 + 基本面避雷）──
 def stock_diagnosis(code: str, name: str = "", with_market: bool = True) -> dict:
     code = normalize(code)
     df = get_daily(code, 70)
@@ -616,6 +698,14 @@ def stock_diagnosis(code: str, name: str = "", with_market: bool = True) -> dict
     else:
         verdict = "观望"
 
+    # 避雷层：基本面/消息面/妖股顶部（不改技术信号，但可下调结论）
+    risk = risk_check(code, name, df=df)
+    is_yaogu = any("妖股顶部" in w for w in risk["风险提示"])
+    is_loss = any("亏损" in w for w in risk["风险提示"])
+    # 妖股顶部风险 → 买入候选一律降级为"高风险观望"（规则09/28/76/92）
+    if is_yaogu and verdict in ("强势买入候选", "买入候选"):
+        verdict = "高风险观望（妖股顶部）"
+
     return {
         "code": code, "name": name, "结论": verdict,
         "大盘": market_regime()["overall"] if with_market else None,
@@ -623,6 +713,7 @@ def stock_diagnosis(code: str, name: str = "", with_market: bool = True) -> dict
         "均线": ma, "量能": vol, "K线形态": pat['patterns'],
         "指标": {"MACD多头": ind.get("MACD_above_signal"), "威廉强势": ind.get("WR_strong"), "WR6": ind.get("WR6")},
         "买入信号": buy, "卖出回避信号": sell,
+        "风险提示": risk["风险提示"], "基本面": risk["基本面"],
     }
 ```
 
