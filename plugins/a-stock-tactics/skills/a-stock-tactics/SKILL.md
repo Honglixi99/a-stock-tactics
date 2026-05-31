@@ -2,13 +2,15 @@
 name: a-stock-tactics
 description: A股短线战法工具包 — 行情数据(通达信mootdx+腾讯)+战法计算层(均线MA5/10/24生命线/60季线、均量线金叉死叉、K线形态识别、MACD/威廉指标、大盘环境、周线确认、涨停板质量)+一键战法体检(stock_diagnosis)+信号资金题材(同花顺热点题材归因、概念板块、行业排名、个股资金流、龙虎榜、解禁、个股新闻、F10/公告)。基于"均线位置+量能状态+所处高低位"三要素的100条短线打板战法，自动按规则打分输出 买入候选/持有/卖出/回避。适用于涨停打板、强势股筛选、均线生命线判断、量能金叉死叉、题材联动、龙虎榜跟踪、个股短线体检等场景。
 origin: custom
-version: 1.5.1
+version: 1.5.2
 ---
 
-# A股短线战法工具包 V1.5.1
+# A股短线战法工具包 V1.5.2
 
 基于一套 100 条短线打板/强势股战法，把**原始行情数据**转成战法决策信号。核心三要素：**均线位置（MA5/MA24生命线/MA60季线）· 量能状态（均量线金叉死叉、持续放量）· 所处高低位**。覆盖主板/中小板/科创板/创业板/ST。
 
+> **V1.5.2（吸收技术指标解读经验）：** `compute_indicators` 升级——**RSI 不再机械判超买**（A股强势股 60-85 是常态，仅 >85 提示过热）+ 新增 **MA50/MA200 金叉死叉**（长期趋势）、**VWMA20**（量价加权均线）、**布林带**上下轨与"触上轨≠必然回落"解读。吸收自 TradingAgents 市场分析师指标经验。
+>
 > **V1.5.1（吸收解禁监控框架）：** 新增 `lockup_pressure()` 解禁压力评级（占流通比 >20%重大/5~20%中等/<5%轻微）+ 减持新规阈值提示；`risk_check` 接入解禁压力。顺带修正 `lockup_expiry` 用错的字段名（`LIMITED_STOCK_TYPE`/`FREE_SHARES_NUM` → 实际 `FREE_SHARES_TYPE`/`FREE_SHARES`）。
 >
 > **V1.5.0（吸收 TradingAgents 游资分析框架）：**
@@ -533,17 +535,49 @@ def detect_patterns(df: pd.DataFrame, code: str, name: str = "") -> dict:
     return {"patterns": pats, "limit_pct": lp, "today_chg": round(chg, 2)}
 
 # ── 缺4：技术指标（规则35 MACD / 99 威廉<50强势）──
+# 指标解读经验吸收自 TradingAgents 市场分析师：
+#   - RSI：A股强势股可长期维持 60-80，不机械套用 >70 超买（仅 >85 才提示过热）
+#   - 布林带：强趋势中价格沿上轨运行，触上轨≠必然回落
+#   - 补 MA50/MA200 金叉死叉（长期趋势）、VWMA（量价加权）
 def compute_indicators(df: pd.DataFrame) -> dict:
     try:
         from stockstats import wrap
         sdf = wrap(df[['open','close','high','low','vol']].rename(columns={'vol':'volume'}).copy())
         macd = float(sdf['macd'].iloc[-1]); macds = float(sdf['macds'].iloc[-1])
+        rsi6 = float(sdf['rsi_6'].iloc[-1])
+        close = float(df['close'].iloc[-1])
+        # 布林带
+        boll_ub = float(sdf['boll_ub'].iloc[-1]); boll_lb = float(sdf['boll_lb'].iloc[-1])
+        # RSI 解读（A股修正）：>85 才算真过热，60-85 是强势常态而非超买
+        if rsi6 > 85:
+            rsi_read = "过热(>85，注意回调)"
+        elif rsi6 >= 60:
+            rsi_read = "强势区(60-85，A股强势股常态，非超买)"
+        elif rsi6 < 20:
+            rsi_read = "超卖(<20)"
+        else:
+            rsi_read = "中性"
+        # MA50/MA200 金叉死叉（长期趋势，规则35/48）
+        ma_cross = None
+        if len(df) >= 200:
+            ma50 = df['close'].rolling(50).mean(); ma200 = df['close'].rolling(200).mean()
+            if pd.notna(ma200.iloc[-2]):
+                p50, p200 = ma50.iloc[-2], ma200.iloc[-2]; c50, c200 = ma50.iloc[-1], ma200.iloc[-1]
+                if p50 <= p200 and c50 > c200: ma_cross = "金叉(50上穿200，长期转多)"
+                elif p50 >= p200 and c50 < c200: ma_cross = "死叉(50下穿200，长期转空)"
+        # VWMA 量价加权均线
+        n = min(20, len(df))
+        vwma = (df['close'].iloc[-n:] * df['vol'].iloc[-n:]).sum() / df['vol'].iloc[-n:].sum()
         return {
             "MACD": round(macd, 3), "MACD_signal": round(macds, 3),
             "MACD_above_signal": bool(macd > macds),
             "WR6": round(float(sdf['wr_6'].iloc[-1]), 1),
             "WR_strong": bool(float(sdf['wr_6'].iloc[-1]) < 50),
-            "RSI6": round(float(sdf['rsi_6'].iloc[-1]), 1),
+            "RSI6": round(rsi6, 1), "RSI解读": rsi_read,
+            "布林上轨": round(boll_ub, 2), "布林下轨": round(boll_lb, 2),
+            "近上轨": bool(close >= boll_ub * 0.98),   # 触上轨：强趋势中可沿轨运行，非必然回落
+            "MA50_200": ma_cross or "无交叉",
+            "VWMA20": round(float(vwma), 2),
         }
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"}
@@ -896,7 +930,9 @@ def stock_diagnosis(code: str, name: str = "", with_market: bool = True) -> dict
         "均线": ma, "量能": vol, "K线形态": pat['patterns'],
         "量价异动": {"量比20日": va["量比20日"], "放量异动": va["放量异动"],
                    "连板数": va["连板数"], "连板语义": va["连板语义"]},
-        "指标": {"MACD多头": ind.get("MACD_above_signal"), "威廉强势": ind.get("WR_strong"), "WR6": ind.get("WR6")},
+        "指标": {"MACD多头": ind.get("MACD_above_signal"), "威廉强势": ind.get("WR_strong"),
+                "WR6": ind.get("WR6"), "RSI6": ind.get("RSI6"), "RSI解读": ind.get("RSI解读"),
+                "MA50_200": ind.get("MA50_200"), "VWMA20": ind.get("VWMA20")},
         "买入信号": buy, "卖出回避信号": sell,
         "风险提示": risk["风险提示"], "基本面": risk["基本面"],
         "资金面": battle,
