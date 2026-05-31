@@ -1,0 +1,20 @@
+# backups
+*.bak
+*.tmp
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# secrets / local config
+.env
+*.local
+
+# mootdx local cache
+.mootdx/
+
+# OS
+.DS_Store
+Thumbs.db
