@@ -2,13 +2,17 @@
 name: a-stock-tactics
 description: A股短线战法工具包 — 行情数据(通达信mootdx+腾讯)+战法计算层(均线MA5/10/24生命线/60季线、均量线金叉死叉、K线形态识别、MACD/威廉指标、大盘环境、周线确认、涨停板质量)+一键战法体检(stock_diagnosis)+信号资金题材(同花顺热点题材归因、概念板块、行业排名、个股资金流、龙虎榜、解禁、个股新闻、F10/公告)。基于"均线位置+量能状态+所处高低位"三要素的100条短线打板战法，自动按规则打分输出 买入候选/持有/卖出/回避。适用于涨停打板、强势股筛选、均线生命线判断、量能金叉死叉、题材联动、龙虎榜跟踪、个股短线体检等场景。
 origin: custom
-version: 1.4.0
+version: 1.4.1
 ---
 
-# A股短线战法工具包 V1.4.0
+# A股短线战法工具包 V1.4.1
 
 基于一套 100 条短线打板/强势股战法，把**原始行情数据**转成战法决策信号。核心三要素：**均线位置（MA5/MA24生命线/MA60季线）· 量能状态（均量线金叉死叉、持续放量）· 所处高低位**。覆盖主板/中小板/科创板/创业板/ST。
 
+> **V1.4.1（资金面 + 成交量进体检/记录）：**
+> - **新增 `fund_flow_em()`**：当日主力/超大单/大单/中单/小单净额。走 push2 域名（`fflow/kline/get` + `klt=101`，比历史接口 push2his 连通性好；间歇可达，已内置重试+绕过系统代理）。`stock_diagnosis` 输出新增「资金面」（主力净/超大单/散户净=中小单），区分主力 vs 散户。
+> - **体检记录 CSV 扩列**：新增 成交量、量比3日、主力净万、超大单万、散户净万。回测时可分析"放量/主力流入的票后续是否更强"。
+>
 > **V1.4.0（新增体检记录 + 回测闭环，用真实涨跌验证战法、按结果调参）：**
 > - **新增 `save_diagnosis()` / `save_batch()`**：每次体检把"结论+当天收盘价+命中信号"追加到 `data/diagnosis_log.csv`（按"体检日+代码"去重）。数据目录已被 `.gitignore` 排除，不上传。
 > - **新增 `backtest()`**：几天后用 mootdx 拉体检日之后的最新收盘价，计算实际 N 日涨跌%，按结论方向（看多→涨为对 / 看空→跌为对）统计各类命中率。**用真实数据反哺阈值优化**，告别凭感觉调参。
@@ -540,6 +544,45 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     except Exception as e:
         return {"error": f"{type(e).__name__}: {e}"}
 
+# ── 缺5b：主力/散户资金流（规则64/76 资金验证）──
+# 注意：东财资金流历史接口 push2his.eastmoney.com 在部分网络被阻断；
+# 改用 push2.eastmoney.com 的 fflow/kline/get + klt=101（日级），同样给主力/超大/大/中/小单净额。
+def fund_flow_em(code: str, lmt: int = 5) -> list:
+    """当日及近 lmt 日主力/散户资金流（万元）。走 push2（连通性比 push2his 好）。
+    返回 [{date, 主力净, 超大单, 大单, 中单, 小单}]，单位万元。失败返回 []。"""
+    import requests
+    _ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    code = normalize(code)
+    secid = f"1.{code}" if code.startswith(("6", "9")) else f"0.{code}"
+    url = "https://push2.eastmoney.com/api/qt/stock/fflow/kline/get"
+    params = {"secid": secid, "klt": "101",
+              "fields1": "f1,f2,f3,f7", "fields2": "f51,f52,f53,f54,f55,f56,f57"}
+    # 东财资金流接口在部分网络间歇可达，重试若干次提高成功率；全失败则返回 []（不影响体检主流程）
+    import time as _t
+    sess = requests.Session(); sess.trust_env = False   # 绕过系统坏代理
+    kl = []
+    for _i in range(4):
+        try:
+            r = sess.get(url, params=params, timeout=10,
+                         headers={"User-Agent": _ua, "Referer": "https://quote.eastmoney.com/"},
+                         proxies={"http": None, "https": None})
+            kl = r.json().get("data", {}).get("klines", []) or []
+            if kl:
+                break
+        except Exception:
+            _t.sleep(0.6 + _i * 0.4)
+    if not kl:
+        return []
+    rows = []
+    for ln in kl[-lmt:]:
+        p = ln.split(",")
+        if len(p) >= 6:
+            rows.append({"date": p[0],
+                         "主力净万": round(float(p[1])/1e4, 0), "超大单万": round(float(p[5])/1e4, 0),
+                         "大单万": round(float(p[4])/1e4, 0), "中单万": round(float(p[3])/1e4, 0),
+                         "小单万": round(float(p[2])/1e4, 0)})
+    return rows
+
 # ── 缺5：大盘环境（规则33先看大盘 / 62空头配合出货 / 97暴跌找逆势强势）──
 def market_regime() -> dict:
     res = {}
@@ -756,6 +799,16 @@ def stock_diagnosis(code: str, name: str = "", with_market: bool = True) -> dict
     # 人工规则提示：约30条靠经验的规则无法自动判定，按形态特征提醒用户结合思考
     reminders = manual_reminders(df, ma, vol, pat, drawdown, verdict)
 
+    # 资金面：当日主力/散户净流入（push2，区分主力 vs 中小单=散户）
+    ff = fund_flow_em(code, lmt=1)
+    flow = {}
+    if ff:
+        f0 = ff[-1]
+        retail = f0["中单万"] + f0["小单万"]   # 中单+小单 ≈ 散户
+        flow = {"主力净万": f0["主力净万"], "超大单万": f0["超大单万"],
+                "散户净万": round(retail, 0),
+                "方向": "主力流入" if f0["主力净万"] > 0 else "主力流出"}
+
     return {
         "code": code, "name": name, "结论": verdict,
         "大盘": market_regime()["overall"] if with_market else None,
@@ -764,6 +817,7 @@ def stock_diagnosis(code: str, name: str = "", with_market: bool = True) -> dict
         "指标": {"MACD多头": ind.get("MACD_above_signal"), "威廉强势": ind.get("WR_strong"), "WR6": ind.get("WR6")},
         "买入信号": buy, "卖出回避信号": sell,
         "风险提示": risk["风险提示"], "基本面": risk["基本面"],
+        "资金面": flow,
         "需人工判断": reminders,
     }
 
@@ -835,6 +889,7 @@ DATA_DIR = os.environ.get(
 DIAG_LOG = os.path.join(DATA_DIR, "diagnosis_log.csv")
 LOG_FIELDS = ["体检日", "代码", "名称", "结论", "收盘价", "买入信号数", "卖出信号数",
               "风险数", "距40日高点", "站生命线", "站5日线", "PE", "净利亿",
+              "成交量万手", "量比3日", "主力净万", "超大单万", "散户净万",
               "低吸类型", "命中信号", "实际N日后", "N日涨跌%", "判定是否正确"]
 
 def _trade_date(df):
@@ -857,6 +912,9 @@ def save_diagnosis(code: str, name: str = "") -> dict:
         "风险数": len(d["风险提示"]), "距40日高点": d["位置"]["距40日高点"],
         "站生命线": d["均线"]["above_MA24"], "站5日线": d["均线"]["above_MA5"],
         "PE": bf.get("PE_TTM"), "净利亿": bf.get("net_profit_yi"),
+        "成交量万手": d["量能"].get("vol"), "量比3日": d["量能"].get("vol_ratio_3d"),
+        "主力净万": d["资金面"].get("主力净万", ""), "超大单万": d["资金面"].get("超大单万", ""),
+        "散户净万": d["资金面"].get("散户净万", ""),
         "低吸类型": find_pullback_buy(code, name).get("类型") or "",
         "命中信号": "|".join(d["买入信号"]) if d["买入信号"] else "|".join(d["卖出回避信号"]),
         "实际N日后": "", "N日涨跌%": "", "判定是否正确": "",  # 回测时回填
