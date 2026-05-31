@@ -2,20 +2,17 @@
 name: a-stock-tactics
 description: A股短线战法工具包 — 行情数据(通达信mootdx+腾讯)+战法计算层(均线MA5/10/24生命线/60季线、均量线金叉死叉、K线形态识别、MACD/威廉指标、大盘环境、周线确认、涨停板质量)+一键战法体检(stock_diagnosis)+信号资金题材(同花顺热点题材归因、概念板块、行业排名、个股资金流、龙虎榜、解禁、个股新闻、F10/公告)。基于"均线位置+量能状态+所处高低位"三要素的100条短线打板战法，自动按规则打分输出 买入候选/持有/卖出/回避。适用于涨停打板、强势股筛选、均线生命线判断、量能金叉死叉、题材联动、龙虎榜跟踪、个股短线体检等场景。
 origin: custom
-version: 1.4.1
+version: 1.4.2
 ---
 
-# A股短线战法工具包 V1.4.1
+# A股短线战法工具包 V1.4.2
 
 基于一套 100 条短线打板/强势股战法，把**原始行情数据**转成战法决策信号。核心三要素：**均线位置（MA5/MA24生命线/MA60季线）· 量能状态（均量线金叉死叉、持续放量）· 所处高低位**。覆盖主板/中小板/科创板/创业板/ST。
 
-> **V1.4.1（资金面 + 成交量进体检/记录）：**
-> - **新增 `fund_flow_em()`**：当日主力/超大单/大单/中单/小单净额。走 push2 域名（`fflow/kline/get` + `klt=101`，比历史接口 push2his 连通性好；间歇可达，已内置重试+绕过系统代理）。`stock_diagnosis` 输出新增「资金面」（主力净/超大单/散户净=中小单），区分主力 vs 散户。
-> - **体检记录 CSV 扩列**：新增 成交量、量比3日、主力净万、超大单万、散户净万。回测时可分析"放量/主力流入的票后续是否更强"。
+> **V1.4.2（移除回测库，回归纯体检工具）：** 移除 `save_diagnosis`/`save_batch`/`backtest` 及本地 CSV 存档——保持轻量纯函数定位，体检结果即时输出不落盘。
 >
-> **V1.4.0（新增体检记录 + 回测闭环，用真实涨跌验证战法、按结果调参）：**
-> - **新增 `save_diagnosis()` / `save_batch()`**：每次体检把"结论+当天收盘价+命中信号"追加到 `data/diagnosis_log.csv`（按"体检日+代码"去重）。数据目录已被 `.gitignore` 排除，不上传。
-> - **新增 `backtest()`**：几天后用 mootdx 拉体检日之后的最新收盘价，计算实际 N 日涨跌%，按结论方向（看多→涨为对 / 看空→跌为对）统计各类命中率。**用真实数据反哺阈值优化**，告别凭感觉调参。
+> **V1.4.1（资金面 + 成交量）：**
+> - **新增 `fund_flow_em()`**：当日主力/超大单/大单/中单/小单净额。走 push2 域名（`fflow/kline/get` + `klt=101`，比历史接口 push2his 连通性好；间歇可达，已内置重试+绕过系统代理）。`stock_diagnosis` 输出新增「资金面」（主力净/超大单/散户净=中小单），区分主力 vs 散户。
 >
 > **V1.3.0（新增低吸选股，解决"只会追涨停"缺陷）：**
 > - **新增 `find_pullback_buy()` / `scan_pullback()`**：筛战法真正的买点——**涨停回踩企稳**（规则59/26：牛股第一次回调到5日线缩量/温和量企稳）和**横盘突破前夜**（规则40/85：整理后第一根放量、尚未涨停）。
@@ -878,121 +875,6 @@ def scan_pullback(codes: list) -> list:
             out.append({"code": normalize(code), "name": nm, **r})
     return out
 
-# ── 缺13：体检记录 + 回测闭环（验证战法准不准 → 按结果调参）──
-import os, csv
-
-# 数据目录：SKILL.md 同级的 data/（已被 .gitignore 排除，不上传）。
-# 可用环境变量 ASTOCK_DATA_DIR 覆盖（如想统一存到别处）。
-DATA_DIR = os.environ.get(
-    "ASTOCK_DATA_DIR",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)) if "__file__" in dir() else ".", "data"))
-DIAG_LOG = os.path.join(DATA_DIR, "diagnosis_log.csv")
-LOG_FIELDS = ["体检日", "代码", "名称", "结论", "收盘价", "买入信号数", "卖出信号数",
-              "风险数", "距40日高点", "站生命线", "站5日线", "PE", "净利亿",
-              "成交量万手", "量比3日", "主力净万", "超大单万", "散户净万",
-              "低吸类型", "命中信号", "实际N日后", "N日涨跌%", "判定是否正确"]
-
-def _trade_date(df):
-    """用K线最后一根的日期作为体检日（不依赖系统时间）"""
-    return str(df.iloc[-1]['date']) if (df is not None and len(df)) else ""
-
-def save_diagnosis(code: str, name: str = "") -> dict:
-    """跑一次体检并把结论+当天价格+信号追加到 data/diagnosis_log.csv。
-    返回写入的那一行。同一(体检日,代码)重复写入会去重更新（以最后一次为准）。"""
-    code = normalize(code)
-    d = stock_diagnosis(code, name, with_market=False)
-    if d.get("error"):
-        return d
-    df = get_daily(code, 70)
-    bf = d["基本面"]
-    row = {
-        "体检日": _trade_date(df), "代码": code, "名称": name,
-        "结论": d["结论"], "收盘价": d["均线"]["price"],
-        "买入信号数": len(d["买入信号"]), "卖出信号数": len(d["卖出回避信号"]),
-        "风险数": len(d["风险提示"]), "距40日高点": d["位置"]["距40日高点"],
-        "站生命线": d["均线"]["above_MA24"], "站5日线": d["均线"]["above_MA5"],
-        "PE": bf.get("PE_TTM"), "净利亿": bf.get("net_profit_yi"),
-        "成交量万手": d["量能"].get("vol"), "量比3日": d["量能"].get("vol_ratio_3d"),
-        "主力净万": d["资金面"].get("主力净万", ""), "超大单万": d["资金面"].get("超大单万", ""),
-        "散户净万": d["资金面"].get("散户净万", ""),
-        "低吸类型": find_pullback_buy(code, name).get("类型") or "",
-        "命中信号": "|".join(d["买入信号"]) if d["买入信号"] else "|".join(d["卖出回避信号"]),
-        "实际N日后": "", "N日涨跌%": "", "判定是否正确": "",  # 回测时回填
-    }
-    os.makedirs(DATA_DIR, exist_ok=True)
-    # 读旧 → 按(体检日,代码)去重 → 重写
-    rows = []
-    if os.path.exists(DIAG_LOG):
-        with open(DIAG_LOG, encoding="utf-8-sig") as f:
-            rows = [r for r in csv.DictReader(f)
-                    if not (r.get("体检日")==row["体检日"] and r.get("代码")==row["代码"])]
-    rows.append(row)
-    with open(DIAG_LOG, "w", encoding="utf-8-sig", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=LOG_FIELDS); w.writeheader(); w.writerows(rows)
-    return row
-
-def save_batch(codes: list) -> int:
-    """批量体检并存档。codes: [(code,name),...] 或 [code,...]。返回写入条数。"""
-    n = 0
-    for item in codes:
-        code, nm = (item if isinstance(item, (tuple, list)) else (item, ""))
-        try:
-            save_diagnosis(code, nm); n += 1
-        except Exception:
-            pass
-    return n
-
-def backtest(verbose: bool = True) -> dict:
-    """回测：对 diagnosis_log.csv 里每条记录，用 mootdx 拉体检日之后的最新收盘价，
-    计算实际涨跌%，并按"结论方向"判定对错，统计各类结论命中率。
-    判定规则：买入候选/持有类→涨为对；回避/卖出类→跌为对。"""
-    if not os.path.exists(DIAG_LOG):
-        return {"error": "暂无记录"}
-    with open(DIAG_LOG, encoding="utf-8-sig") as f:
-        rows = list(csv.DictReader(f))
-    bullish = ("强势买入候选", "买入候选", "持有/观察")
-    bearish = ("回避", "回避/卖出", "高风险观望（妖股顶部）")
-    from collections import defaultdict
-    stat = defaultdict(lambda: {"n": 0, "correct": 0, "sum_chg": 0.0})
-    for r in rows:
-        code = r["代码"]; diag_date = r["体检日"]
-        try:
-            entry = float(r["收盘价"])
-            df = get_daily(code, 70)
-            # 找体检日之后的最后一根收盘
-            after = df[df['date'] > diag_date]
-            if len(after) == 0:
-                continue
-            now_close = float(after.iloc[-1]['close'])
-            chg = (now_close/entry - 1) * 100
-            n_days = len(after)
-            verdict = r["结论"]
-            if verdict in bullish:
-                correct = chg > 0
-            elif verdict in bearish:
-                correct = chg < 0
-            else:
-                correct = None  # 观望不计入对错
-            r["实际N日后"] = f"{now_close}({n_days}日)"; r["N日涨跌%"] = round(chg, 1)
-            r["判定是否正确"] = "" if correct is None else ("对" if correct else "错")
-            if correct is not None:
-                k = "看多" if verdict in bullish else "看空"
-                stat[k]["n"] += 1; stat[k]["sum_chg"] += chg
-                if correct: stat[k]["correct"] += 1
-        except Exception:
-            continue
-    # 回写带回测结果的 csv
-    with open(DIAG_LOG, "w", encoding="utf-8-sig", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=LOG_FIELDS); w.writeheader(); w.writerows(rows)
-    summary = {}
-    for k, v in stat.items():
-        summary[k] = {"样本": v["n"], "命中率": f"{v['correct']/v['n']*100:.0f}%" if v["n"] else "-",
-                      "平均涨跌%": round(v["sum_chg"]/v["n"], 1) if v["n"] else 0}
-    if verbose:
-        print("回测结果（按结论方向）：")
-        for k, v in summary.items():
-            print(f"  {k}: 样本{v['样本']} 命中率{v['命中率']} 平均涨跌{v['平均涨跌%']}%")
-    return summary
 ```
 
 ### 用法
@@ -1907,4 +1789,3 @@ pip install mootdx requests pandas stockstats
 
 # 4. 启动 Claude Code，说"帮我体检一下 600879"即可自动激活
 ```
-

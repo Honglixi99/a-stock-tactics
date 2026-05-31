@@ -6,7 +6,7 @@
 
 核心是一个自包含的 `SKILL.md`（结构化 Markdown + 内嵌可运行 Python），兼容 [Claude Code](https://github.com/anthropics/claude-code)、Codex 等支持上下文注入的 AI 编程助手。
 
-> **当前版本 v1.4.1** ·「技术打分 + 基本面避雷 + 人工规则提示」三层体检 +「低吸选股」（不追涨停）+「体检记录 + 回测」（用真实涨跌验证战法）+「成交量 + 主力/散户资金流」。
+> **当前版本 v1.4.2** ·「技术打分 + 基本面避雷 + 人工规则提示」三层体检 +「低吸选股」（不追涨停）+「成交量 + 主力/散户资金流」。
 
 ---
 
@@ -31,12 +31,7 @@
 - **涨停回踩企稳**（规则59/26：牛股第一次回调到5日线、企稳）+ **横盘突破前夜**（规则40/85：整理后第一根放量、尚未涨停）
 - `scan_pullback([代码列表])` 批量筛"可低吸位置"的标的
 
-**⑤ 体检记录 + 回测（save_diagnosis / backtest）— 用真实涨跌验证战法**
-- 每次体检把"结论+收盘价+成交量+主力/散户资金流+命中信号"存到本地 `data/diagnosis_log.csv`（不上传）
-- 过几天 `backtest()` 自动拉实际涨跌，按结论方向（看多→涨为对/看空→跌为对）统计命中率
-- 用真实数据反哺阈值优化，而非凭感觉调参
-
-**⑥ 资金面（fund_flow_em）— 主力 vs 散户**
+**⑤ 资金面（fund_flow_em）— 主力 vs 散户**
 - 当日主力净流入 / 超大单 / 大单 / 中单 / 小单（散户≈中小单）
 - 走东财 push2 域名（连通性优于历史接口 push2his，间歇可达，内置重试+绕过系统代理）；拿不到则留空，不影响体检主流程
 
@@ -91,7 +86,6 @@ pip install mootdx requests pandas stockstats
 | 「现在大盘什么环境」 | `market_regime()` 看指数多空 |
 | 「我持仓这几只要不要跑」 | 逐只跑卖出预警 |
 | 「有没有可以低吸的票（别追涨停）」 | `scan_pullback` 筛涨停回踩/横盘突破位 |
-| 「把今天这些票存下来，过几天验证」 | `save_batch` 存档 + 几天后 `backtest` 算命中率 |
 
 > **Windows 用户**：把上面路径换成 `%USERPROFILE%\.claude\skills\a-stock-tactics\`。
 
@@ -119,7 +113,7 @@ print(d["结论"])          # 强势买入候选
 
 ```
 Layer 1 行情层    mootdx(K线/盘口/逐笔) + 腾讯(实时价/量比/换手) + 百度K线
-Layer 2 战法计算层 ★均线 / 均量线金叉死叉 / K线形态 / MACD威廉 / 大盘 / 周线 / stock_diagnosis / find_pullback_buy(低吸) / save_diagnosis+backtest(记录回测)
+Layer 2 战法计算层 ★均线 / 均量线金叉死叉 / K线形态 / MACD威廉 / 大盘 / 周线 / stock_diagnosis / find_pullback_buy(低吸) / fund_flow_em(主力散户)
 Layer 3 信号题材   同花顺热点题材 + 概念板块 + 行业排名 + 资金流 + 龙虎榜 + 解禁
 Layer 4 资金流向   个股资金流 120 日（验证放量真假）
 Layer 5 新闻层     东财个股新闻（消息面避雷）
