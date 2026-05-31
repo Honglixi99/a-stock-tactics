@@ -18,3 +18,8 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# 本地体检记录/回测数据（个人数据，不上传）—— 任意层级的 data/ 都排除
+data/
+**/data/
+diagnosis_log.csv
