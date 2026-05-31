@@ -1,0 +1,22 @@
+{
+    "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+    "name": "a-stock-tactics",
+    "description": "A股短线战法工具包 marketplace — 基于100条短线打板战法的行情数据 + 战法计算 + 一键体检",
+    "owner": {
+        "name": "Honglixi99",
+        "email": "Honglixi99@users.noreply.github.com"
+    },
+    "plugins": [
+        {
+            "name": "a-stock-tactics",
+            "description": "Adds A股短线战法体检：均线/量能/K线形态/MACD威廉计算 + stock_diagnosis 一键打分输出 买入候选/持有/卖出/回避",
+            "version": "1.0.0",
+            "author": {
+                "name": "Honglixi99",
+                "email": "Honglixi99@users.noreply.github.com"
+            },
+            "source": "./plugins/a-stock-tactics",
+            "category": "productivity"
+        }
+    ]
+}

@@ -22,15 +22,30 @@
 
 ## 📦 别人怎么使用这个 Skill（安装与用法）
 
-### 方式一：作为 Claude Code 的 Skill（推荐）
+### 方式一：作为 Claude Code 插件市场一键安装（推荐）
+
+本仓库是一个 Claude Code 插件市场（marketplace）。在 Claude Code 里：
+
+```
+/plugin marketplace add Honglixi99/a-stock-tactics
+/plugin install a-stock-tactics@a-stock-tactics
+```
+
+然后安装 Python 依赖：
+
+```bash
+pip install mootdx requests pandas stockstats
+```
+
+### 方式二：手动放入 skill 目录
 
 ```bash
 # 1. 创建 skill 目录
 mkdir -p ~/.claude/skills/a-stock-tactics      # Windows: %USERPROFILE%\.claude\skills\a-stock-tactics
 
-# 2. 下载 SKILL.md 放进去
+# 2. 下载 SKILL.md（注意：仓库已是插件市场结构，SKILL.md 在 plugins 子目录）
 curl -o ~/.claude/skills/a-stock-tactics/SKILL.md \
-  https://raw.githubusercontent.com/Honglixi99/a-stock-tactics/main/SKILL.md
+  https://raw.githubusercontent.com/Honglixi99/a-stock-tactics/main/plugins/a-stock-tactics/skills/a-stock-tactics/SKILL.md
 
 # 3. 安装 Python 依赖
 pip install mootdx requests pandas stockstats
@@ -81,7 +96,7 @@ Layer 6 基础数据   mootdx F10 + 东财个股信息（流通盘/题材/上市
 Layer 7 公告层     巨潮 cninfo 公告全文
 ```
 
-详见 [`SKILL.md`](./SKILL.md)。
+详见 [`SKILL.md`](./plugins/a-stock-tactics/skills/a-stock-tactics/SKILL.md) 与战法原文 [`reference/战法100条.md`](./plugins/a-stock-tactics/skills/a-stock-tactics/reference/战法100条.md)。
 
 ---
 

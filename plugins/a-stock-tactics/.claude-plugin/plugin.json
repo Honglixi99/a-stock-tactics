@@ -1,0 +1,10 @@
+{
+    "name": "a-stock-tactics",
+    "description": "A股短线战法工具包 — 行情数据 + 战法计算层(均线/量能/K线形态/MACD威廉/大盘/周线) + 一键体检 stock_diagnosis",
+    "version": "1.0.0",
+    "author": {
+        "name": "Honglixi99",
+        "email": "Honglixi99@users.noreply.github.com"
+    },
+    "keywords": ["a-stock", "短线", "战法", "涨停", "打板", "均线", "龙虎榜", "stock"]
+}
