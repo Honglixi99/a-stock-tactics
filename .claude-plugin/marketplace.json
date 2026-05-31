@@ -10,7 +10,7 @@
         {
             "name": "a-stock-tactics",
             "description": "Adds A股短线战法体检：均线/量能/K线形态/MACD威廉计算 + stock_diagnosis 一键打分输出 买入候选/持有/卖出/回避",
-            "version": "1.5.0",
+            "version": "1.5.1",
             "author": {
                 "name": "Honglixi99",
                 "email": "Honglixi99@users.noreply.github.com"

@@ -6,7 +6,7 @@
 
 核心是一个自包含的 `SKILL.md`（结构化 Markdown + 内嵌可运行 Python），兼容 [Claude Code](https://github.com/anthropics/claude-code)、Codex 等支持上下文注入的 AI 编程助手。
 
-> **当前版本 v1.5.0** ·「技术打分 + 基本面避雷 + 人工规则提示」三层体检 +「低吸选股」（不追涨停）+「资金博弈四态 + 连板语义」（吸收自 TradingAgents 游资框架）。
+> **当前版本 v1.5.1** ·「技术打分 + 基本面避雷 + 人工规则提示」三层体检 +「低吸选股」（不追涨停）+「资金博弈四态 + 连板语义 + 解禁压力评级」（吸收自 TradingAgents 游资/解禁框架）。
 
 ---
 

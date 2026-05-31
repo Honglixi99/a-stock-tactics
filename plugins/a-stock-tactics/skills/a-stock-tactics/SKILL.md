@@ -2,13 +2,15 @@
 name: a-stock-tactics
 description: A股短线战法工具包 — 行情数据(通达信mootdx+腾讯)+战法计算层(均线MA5/10/24生命线/60季线、均量线金叉死叉、K线形态识别、MACD/威廉指标、大盘环境、周线确认、涨停板质量)+一键战法体检(stock_diagnosis)+信号资金题材(同花顺热点题材归因、概念板块、行业排名、个股资金流、龙虎榜、解禁、个股新闻、F10/公告)。基于"均线位置+量能状态+所处高低位"三要素的100条短线打板战法，自动按规则打分输出 买入候选/持有/卖出/回避。适用于涨停打板、强势股筛选、均线生命线判断、量能金叉死叉、题材联动、龙虎榜跟踪、个股短线体检等场景。
 origin: custom
-version: 1.5.0
+version: 1.5.1
 ---
 
-# A股短线战法工具包 V1.5.0
+# A股短线战法工具包 V1.5.1
 
 基于一套 100 条短线打板/强势股战法，把**原始行情数据**转成战法决策信号。核心三要素：**均线位置（MA5/MA24生命线/MA60季线）· 量能状态（均量线金叉死叉、持续放量）· 所处高低位**。覆盖主板/中小板/科创板/创业板/ST。
 
+> **V1.5.1（吸收解禁监控框架）：** 新增 `lockup_pressure()` 解禁压力评级（占流通比 >20%重大/5~20%中等/<5%轻微）+ 减持新规阈值提示；`risk_check` 接入解禁压力。顺带修正 `lockup_expiry` 用错的字段名（`LIMITED_STOCK_TYPE`/`FREE_SHARES_NUM` → 实际 `FREE_SHARES_TYPE`/`FREE_SHARES`）。
+>
 > **V1.5.0（吸收 TradingAgents 游资分析框架）：**
 > - **新增 `volume_anomaly()`**：量价异动（日量>20日均量2倍=放量异动）+ **连板放缩量语义**（首板放量=分歧/缩量=一致；三板以上=妖股模式）。`risk_check` 妖股识别接入连板语义，三板以上直接标妖股模式。
 > - **新增 `capital_battle()`**：综合主力净/散户净+量价，判定**资金博弈四态**（主力吸筹/主力出货/游资接力/散户主导诱多）。`stock_diagnosis` 资金面升级为四态判定。
@@ -762,6 +764,17 @@ def risk_check(code: str, name: str = "", df=None) -> dict:
     except Exception:
         pass
 
+    # 4b) 解禁压力（吸收自 TradingAgents 解禁监控框架）
+    try:
+        lp_info = lockup_pressure(code)
+        info["解禁压力"] = lp_info.get("评级", "")
+        if lp_info.get("评级") == "重大压力":
+            warns.append(f"⚠️解禁重大压力：最近{lp_info.get('最近解禁日')}解禁，最大单批占流通{lp_info.get('最大单批占流通%')}%（>20%）")
+        elif lp_info.get("评级") == "中等压力":
+            warns.append(f"⚠️解禁中等压力：{lp_info.get('最近解禁日')}解禁占流通{lp_info.get('最大单批占流通%')}%")
+    except Exception:
+        pass
+
     # 5) 新闻（尽力而为，本机网络不稳）
     try:
         inner = _json.dumps({"uid":"","keyword":code,"type":["cmsArticleWebOld"],"client":"web",
@@ -1277,14 +1290,17 @@ def lockup_expiry(code: str, trade_date: str, forward_days: int = 90) -> dict:
         page_size=15,
         sort_columns="FREE_DATE", sort_types="-1",
     )
-    history = []
-    for row in history_data:
-        history.append({
+    def _parse(row):
+        # FREE_RATIO 为占流通比(小数，0.028=2.8%)；LIFT_MARKET_CAP 解禁市值(万元)
+        return {
             "date": str(row.get("FREE_DATE", ""))[:10],
-            "type": row.get("LIMITED_STOCK_TYPE", ""),
-            "shares": row.get("FREE_SHARES_NUM", 0),
-            "ratio": row.get("FREE_RATIO", 0),
-        })
+            "type": row.get("FREE_SHARES_TYPE", ""),          # 正确字段名
+            "shares": row.get("FREE_SHARES", 0),               # 解禁股数(万股)
+            "ratio_float_pct": round((row.get("FREE_RATIO") or 0) * 100, 2),   # 占流通比%
+            "ratio_total_pct": round((row.get("TOTALSHARES_RATIO") or 0) * 100, 2),  # 占总股本%
+            "lift_mcap_wan": row.get("LIFT_MARKET_CAP", 0),    # 解禁市值(万元)
+        }
+    history = [_parse(r) for r in history_data]
 
     # 2. 未来待解禁
     end_date = datetime.strptime(trade_date, "%Y-%m-%d") + timedelta(days=forward_days)
@@ -1295,16 +1311,42 @@ def lockup_expiry(code: str, trade_date: str, forward_days: int = 90) -> dict:
         page_size=20,
         sort_columns="FREE_DATE", sort_types="1",
     )
-    upcoming = []
-    for row in upcoming_data:
-        upcoming.append({
-            "date": str(row.get("FREE_DATE", ""))[:10],
-            "type": row.get("LIMITED_STOCK_TYPE", ""),
-            "shares": row.get("FREE_SHARES_NUM", 0),
-            "ratio": row.get("FREE_RATIO", 0),
-        })
-
+    upcoming = [_parse(r) for r in upcoming_data]
     return {"history": history, "upcoming": upcoming}
+
+# ── 缺6b：解禁压力评级（吸收自 TradingAgents 解禁监控框架）──
+def lockup_pressure(code: str, trade_date: str = None, forward_days: int = 90) -> dict:
+    """未来 forward_days 内解禁压力评级。
+    判据：解禁占流通比 >20%=重大压力，5~20%=中等，<5%=轻微，无解禁=无压力。
+    减持新规提示：大股东每90天集中竞价≤总股本1%、大宗≤2%。"""
+    code = normalize(code)
+    if trade_date is None:
+        df = get_daily(code, 5)
+        trade_date = str(df.iloc[-1]['date']) if (df is not None and len(df)) else "2026-01-01"
+    try:
+        data = lockup_expiry(code, trade_date, forward_days)
+    except Exception:
+        return {"评级": "[数据缺失:解禁]", "说明": "东财解禁接口未取到"}
+    up = data.get("upcoming", [])
+    if not up:
+        return {"评级": "无压力", "未来解禁批次": 0, "说明": f"未来{forward_days}天无待解禁"}
+    max_ratio = max((u["ratio_float_pct"] for u in up), default=0)
+    total_mcap = sum((u.get("lift_mcap_wan") or 0) for u in up) / 1e4  # 亿
+    if max_ratio > 20:
+        level = "重大压力"
+    elif max_ratio >= 5:
+        level = "中等压力"
+    elif max_ratio > 0:
+        level = "轻微压力"
+    else:
+        level = "无明显压力"
+    nearest = min(up, key=lambda u: u["date"])
+    return {
+        "评级": level, "未来解禁批次": len(up),
+        "最大单批占流通%": max_ratio, "解禁总市值亿": round(total_mcap, 1),
+        "最近解禁日": nearest["date"], "最近类型": nearest["type"],
+        "说明": "解禁占流通比 >20%重大/5~20%中等/<5%轻微；减持新规：大股东90天内集中竞价≤总股本1%、大宗≤2%",
+    }
 
 # 用法
 data = lockup_expiry("002475", "2026-05-17")
