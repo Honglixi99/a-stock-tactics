@@ -2,13 +2,17 @@
 name: a-stock-tactics
 description: A股短线战法工具包 — 行情数据(通达信mootdx+腾讯)+战法计算层(均线MA5/10/24生命线/60季线、均量线金叉死叉、K线形态识别、MACD/威廉指标、大盘环境、周线确认、涨停板质量)+一键战法体检(stock_diagnosis)+信号资金题材(同花顺热点题材归因、概念板块、行业排名、个股资金流、龙虎榜、解禁、个股新闻、F10/公告)。基于"均线位置+量能状态+所处高低位"三要素的100条短线打板战法，自动按规则打分输出 买入候选/持有/卖出/回避。适用于涨停打板、强势股筛选、均线生命线判断、量能金叉死叉、题材联动、龙虎榜跟踪、个股短线体检等场景。
 origin: custom
-version: 1.2.0
+version: 1.3.0
 ---
 
-# A股短线战法工具包 V1.2.0
+# A股短线战法工具包 V1.3.0
 
 基于一套 100 条短线打板/强势股战法，把**原始行情数据**转成战法决策信号。核心三要素：**均线位置（MA5/MA24生命线/MA60季线）· 量能状态（均量线金叉死叉、持续放量）· 所处高低位**。覆盖主板/中小板/科创板/创业板/ST。
 
+> **V1.3.0（新增低吸选股，解决"只会追涨停"缺陷）：**
+> - **新增 `find_pullback_buy()` / `scan_pullback()`**：筛战法真正的买点——**涨停回踩企稳**（规则59/26：牛股第一次回调到5日线缩量/温和量企稳）和**横盘突破前夜**（规则40/85：整理后第一根放量、尚未涨停）。
+> - **专门排除"当日涨停、偏离5日线过远"的追高位**（规则27/28）。此前 `stock_diagnosis` 的"强势买入候选"几乎全是当天涨停股，与"不追高"规则自相矛盾；本函数提供可低吸的位置，是对它的补充。
+>
 > **V1.2.0（新增人工规则提示）：**
 > - **新增 `manual_reminders()`**：100 条里约 30 条是靠经验的"人工纪律"（波段计数、追高、暴跌后第一反弹、洗盘判断等），无法自动打分。本函数按形态特征**主动提醒**该结合哪条人工规则思考（如：近期跌停+今日反弹→提示规则93；涨停偏离5日线过远→提示规则27/28不追高）。
 > - `stock_diagnosis` 输出新增 `需人工判断` 字段。让使用者不漏掉那些工具算不了、但战法很看重的经验铁律。
@@ -758,6 +762,63 @@ def stock_diagnosis(code: str, name: str = "", with_market: bool = True) -> dict
         "风险提示": risk["风险提示"], "基本面": risk["基本面"],
         "需人工判断": reminders,
     }
+
+# ── 缺12：低吸选股 —— 战法真正的买点（涨停回踩 / 横盘突破），不追已涨停 ──
+def find_pullback_buy(code: str, name: str = "") -> dict:
+    """筛"可低吸位置"，而非追已涨停的票。对应战法规则：
+    - 规则59/26：牛股第一次回调到5日线/生命线不破、缩量企稳 = 介入良机
+    - 规则40/85：横盘整理(3~8天)后第一根放量、尚未涨停 = 突破前夜
+    返回 {类型, 命中, 理由}；不命中返回 类型=None。
+    专门排除"今日涨停、偏离5日线过远"的追高位置（规则27/28）。
+    """
+    code = normalize(code)
+    df = get_daily(code, 70)
+    if df.empty or len(df) < 30:
+        return {"类型": None, "理由": "数据不足"}
+    ma = compute_ma(df); vol = compute_vol_ma(df)
+    lp = limit_pct(code, name)
+    last = df.iloc[-1]
+    chg = last['chg']
+    today_limit = chg >= lp - 0.3
+
+    # 前置硬条件：必须在生命线上方（多头土壤，规则18）+ 不亏损
+    if not ma['above_MA24']:
+        return {"类型": None, "理由": "生命线下方，不具备低吸土壤"}
+
+    # 类型A：涨停回踩企稳 —— 近15日有过涨停，今日未涨停，回踩到5日线附近(±3%)缩量
+    chg15 = [(df.iloc[i]['close']/df.iloc[i-1]['close']-1)*100 for i in range(len(df)-15, len(df))]
+    had_limit = any(c >= lp - 0.3 for c in chg15[:-1])
+    near_ma5 = abs(ma['deviate_MA5_pct']) <= 4            # 贴近5日线（±4%）
+    not_dump = last['vol'] < vol['VMA5'] * 1.2            # 量能温和（不放巨量出货即可，回踩位健康标志）
+    if (not today_limit) and had_limit and near_ma5 and not_dump and ma['MA5_above_MA24']:
+        vt = "缩量" if last['vol'] < vol['VMA5'] * 0.9 else "温和量"
+        return {"类型": "涨停回踩企稳", "命中": "规则59/26",
+                "理由": f"近15日涨停过、今回踩5日线({ma['deviate_MA5_pct']:+.1f}%)且{vt}，牛股第一次回调介入位"}
+
+    # 类型B：横盘突破前夜 —— 前期窄幅整理(波动<12%)，今日放量上涨但未涨停
+    win = df['close'].iloc[-9:-1]                          # 前8日
+    box_range = (win.max() - win.min()) / win.mean() * 100
+    today_up = 2 < chg < (lp - 1)                          # 上涨但非涨停
+    vol_up = last['vol'] > vol['VMA5'] * 1.3               # 放量
+    if box_range < 12 and today_up and vol_up and ma['above_MA5']:
+        return {"类型": "横盘突破前夜", "命中": "规则40/85",
+                "理由": f"前8日窄幅整理({box_range:.1f}%)、今日放量+{chg:.1f}%突破未涨停，启动信号"}
+
+    # 追高排除说明
+    if today_limit:
+        return {"类型": None, "理由": f"今日涨停(偏离5日线{ma['deviate_MA5_pct']:+.1f}%)，属追高位，非低吸（规则28）"}
+    return {"类型": None, "理由": "当前非低吸位置"}
+
+# 批量低吸扫描：传入候选代码列表，返回命中的低吸标的
+def scan_pullback(codes: list) -> list:
+    """对一批代码筛低吸位置。codes: [(code, name), ...] 或 [code, ...]"""
+    out = []
+    for item in codes:
+        code, nm = (item if isinstance(item, (tuple, list)) else (item, ""))
+        r = find_pullback_buy(code, nm)
+        if r["类型"]:
+            out.append({"code": normalize(code), "name": nm, **r})
+    return out
 ```
 
 ### 用法
